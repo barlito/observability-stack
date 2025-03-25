@@ -11,6 +11,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./prometheus:/etc/prometheus
       - prom_data:/prometheus
+    networks:
+      - monitoring
 
   grafana:
     image: grafana/grafana
@@ -27,6 +29,8 @@ services:
     volumes:
       - ./grafana:/etc/grafana/provisioning/datasources
       - grafana_data:/var/lib/grafana
+    networks:
+      - monitoring
 
   loki:
     image: grafana/loki:2.8.0
@@ -36,6 +40,8 @@ services:
       - "3100:3100"
     volumes:
       - loki_data:/loki
+    networks:
+      - monitoring
 
   grafana-renderer:
     image: grafana/grafana-image-renderer:latest
@@ -45,6 +51,8 @@ services:
       - 8081
     volumes:
       - ./grafana-renderer/config.json:/usr/src/app/config.json
+    networks:
+      - monitoring
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.47.0
@@ -58,6 +66,8 @@ services:
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
+    networks:
+      - monitoring
 
   node_exporter:
     image: quay.io/prometheus/node-exporter:latest
@@ -74,6 +84,8 @@ services:
       - '--path.rootfs=/rootfs'
       - '--path.sysfs=/host/sys'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - monitoring
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.118.0
@@ -88,6 +100,8 @@ services:
       - 4317:4317 # OTLP gRPC receiver
       - 4318:4318 # OTLP http receiver
       - 55679:55679 # zpages extension
+    networks:
+      - monitoring
 
   jaeger:
     image: jaegertracing/jaeger:2.2.0
@@ -100,6 +114,8 @@ services:
 #      - 9411:9411
     environment:
       COLLECTOR_ZIPKIN_HTTP_PORT: 9411
+    networks:
+      - monitoring
 
   hotrod:
     image: jaegertracing/example-hotrod:latest
@@ -107,8 +123,15 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
     ports:
       - "8088:8080"
+    networks:
+      - monitoring
 
 volumes:
   prom_data:
   grafana_data:
   loki_data:
+
+networks:
+  default:
+  monitoring:
+    driver: bridge

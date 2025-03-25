@@ -26,6 +26,13 @@ exporters:
     endpoint: 0.0.0.0:8889
     namespace: default
 
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    tls:
+      insecure: true
+
+  debug:
+
 extensions:
   health_check:
   pprof:
@@ -37,12 +44,12 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/jaeger]
+      exporters: [otlp/jaeger, debug]
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [prometheus]
+      exporters: [prometheus, debug]
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp]
+      exporters: [debug, loki]
