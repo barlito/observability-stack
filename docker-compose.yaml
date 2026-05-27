@@ -19,6 +19,7 @@ services:
                 - traefik.http.routers.obs_prometheus-secure.rule=Host(`prometheus.local.barlito.fr`)
                 - traefik.http.routers.obs_prometheus-secure.entrypoints=https
                 - traefik.http.routers.obs_prometheus-secure.tls=true
+                - traefik.http.routers.obs_prometheus-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - obs_internal
             - traefik_traefik_proxy
@@ -26,8 +27,14 @@ services:
     grafana:
         image: grafana/grafana
         environment:
-            GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-            GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana}
+            GF_AUTH_PROXY_ENABLED: "true"
+            GF_AUTH_PROXY_HEADER_NAME: Remote-User
+            GF_AUTH_PROXY_HEADER_PROPERTY: username
+            GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+            GF_AUTH_PROXY_HEADERS: "Email:Remote-Email Name:Remote-Name"
+            GF_AUTH_BASIC_ENABLED: "false"
+            GF_AUTH_DISABLE_LOGIN_FORM: "true"
+            GF_USERS_ALLOW_SIGN_UP: "false"
         volumes:
             - ./grafana:/etc/grafana/provisioning/datasources
             - grafana_data:/var/lib/grafana
@@ -43,6 +50,7 @@ services:
                 - traefik.http.routers.obs_grafana-secure.rule=Host(`grafana.local.barlito.fr`)
                 - traefik.http.routers.obs_grafana-secure.entrypoints=https
                 - traefik.http.routers.obs_grafana-secure.tls=true
+                - traefik.http.routers.obs_grafana-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - obs_internal
             - traefik_traefik_proxy
@@ -55,6 +63,15 @@ services:
         volumes:
             - ./loki:/etc/loki
             - loki_data:/loki
+        networks:
+            - obs_internal
+
+    tempo:
+        image: grafana/tempo:latest
+        command: -config.file=/etc/tempo/tempo.yml
+        volumes:
+            - ./tempo:/etc/tempo
+            - tempo_data:/var/tempo
         networks:
             - obs_internal
 
@@ -74,6 +91,7 @@ services:
                 - traefik.http.routers.obs_dozzle-secure.rule=Host(`dozzle.local.barlito.fr`)
                 - traefik.http.routers.obs_dozzle-secure.entrypoints=https
                 - traefik.http.routers.obs_dozzle-secure.tls=true
+                - traefik.http.routers.obs_dozzle-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - traefik_traefik_proxy
 
@@ -120,6 +138,7 @@ volumes:
     grafana_data:
     loki_data:
     beszel_data:
+    tempo_data:
 
 networks:
     traefik_traefik_proxy:

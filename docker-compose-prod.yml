@@ -24,9 +24,7 @@ services:
                 - traefik.http.routers.obs_prometheus-secure.entrypoints=https
                 - traefik.http.routers.obs_prometheus-secure.tls=true
                 - traefik.http.routers.obs_prometheus-secure.tls.certresolver=letsencrypt
-                - traefik.http.routers.obs_prometheus-secure.middlewares=obs-auth@swarm,security-headers@file
-
-                - traefik.http.middlewares.obs-auth.basicauth.users=${OBS_BASIC_AUTH}
+                - traefik.http.routers.obs_prometheus-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - obs_internal
             - traefik_traefik_proxy
@@ -34,8 +32,13 @@ services:
     grafana:
         image: grafana/grafana
         environment:
-            GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
-            GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+            GF_AUTH_PROXY_ENABLED: "true"
+            GF_AUTH_PROXY_HEADER_NAME: Remote-User
+            GF_AUTH_PROXY_HEADER_PROPERTY: username
+            GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+            GF_AUTH_PROXY_HEADERS: "Email:Remote-Email Name:Remote-Name"
+            GF_AUTH_BASIC_ENABLED: "false"
+            GF_AUTH_DISABLE_LOGIN_FORM: "true"
             GF_USERS_ALLOW_SIGN_UP: "false"
             GF_SECURITY_COOKIE_SECURE: "true"
             GF_SECURITY_STRICT_TRANSPORT_SECURITY: "true"
@@ -59,7 +62,7 @@ services:
                 - traefik.http.routers.obs_grafana-secure.entrypoints=https
                 - traefik.http.routers.obs_grafana-secure.tls=true
                 - traefik.http.routers.obs_grafana-secure.tls.certresolver=letsencrypt
-                - traefik.http.routers.obs_grafana-secure.middlewares=security-headers@file
+                - traefik.http.routers.obs_grafana-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - obs_internal
             - traefik_traefik_proxy
@@ -72,6 +75,19 @@ services:
         volumes:
             - ./loki:/etc/loki
             - loki_data:/loki
+        deploy:
+            replicas: 1
+            update_config:
+                order: stop-first
+        networks:
+            - obs_internal
+
+    tempo:
+        image: grafana/tempo:latest
+        command: -config.file=/etc/tempo/tempo.yml
+        volumes:
+            - ./tempo:/etc/tempo
+            - tempo_data:/var/tempo
         deploy:
             replicas: 1
             update_config:
@@ -100,7 +116,7 @@ services:
                 - traefik.http.routers.obs_dozzle-secure.entrypoints=https
                 - traefik.http.routers.obs_dozzle-secure.tls=true
                 - traefik.http.routers.obs_dozzle-secure.tls.certresolver=letsencrypt
-                - traefik.http.routers.obs_dozzle-secure.middlewares=obs-auth@swarm,security-headers@file
+                - traefik.http.routers.obs_dozzle-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - traefik_traefik_proxy
 
@@ -135,6 +151,7 @@ volumes:
     grafana_data:
     loki_data:
     beszel_data:
+    tempo_data:
 
 networks:
     traefik_traefik_proxy:

@@ -7,8 +7,9 @@ Self-hosted monitoring stack running on Docker Swarm behind Traefik.
 | Service | Role | Local | Prod |
 |---------|------|-------|------|
 | **Prometheus** | Metrics collection & storage | `prometheus.local.barlito.fr` | `prometheus.barlito.fr` |
-| **Grafana** | Metrics dashboards | `grafana.local.barlito.fr` | `grafana.barlito.fr` |
+| **Grafana** | Dashboards (metrics, logs, traces) | `grafana.local.barlito.fr` | `grafana.barlito.fr` |
 | **Loki** | Log aggregation (Docker log driver) | `localhost:3100` | `127.0.0.1:3100` |
+| **Tempo** | Distributed tracing (OTel receiver) | Internal (port 4317/4318) | Internal (port 4317/4318) |
 | **Dozzle** | Real-time Docker log viewer | `dozzle.local.barlito.fr` | `dozzle.barlito.fr` |
 | **Beszel** | Server & container monitoring | `beszel.local.barlito.fr` | `beszel.barlito.fr` |
 
@@ -17,34 +18,28 @@ A `log-generator` service is included in local for testing the Loki pipeline.
 ## Prerequisites
 
 - Docker with Swarm mode enabled (`docker swarm init`)
-- [traefik-base](https://github.com/barlito/traefik-base) stack running with `traefik_traefik_proxy` network
+- [traefik-base](https://github.com/barlito/traefik-base) stack running with `traefik_traefik_proxy` network and Authelia
 - Loki Docker log driver plugin: `docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions`
 
-## Local setup
+## Setup
 
 ```bash
-cp .env.example .env
-# Edit .env with your credentials
-make deploy
+make deploy          # Local
+make deploy.prod     # Production
 ```
 
-## Production setup
+No `.env` file needed — authentication is handled by Authelia via Traefik forwardAuth. Grafana uses auth proxy mode (auto-login from Authelia session).
 
-```bash
-cp .env.example .env
-# Set strong GRAFANA_ADMIN_PASSWORD
-# Generate OBS_BASIC_AUTH: echo "$(htpasswd -nB user)" | sed -e s/\\$/\\$\\$/g
-make deploy.prod
-```
+### Auth
 
-### Security (prod)
-
-- **HTTPS enforced** with Let's Encrypt via Traefik
-- **Prometheus & Dozzle** protected by HTTP Basic Auth (`OBS_BASIC_AUTH`)
-- **Beszel** has its own auth (PocketBase)
-- **Grafana** has its own auth (sign-up disabled, secure cookies)
-- **Loki** bound to `127.0.0.1` only (not exposed externally)
-- **Security headers** applied via Traefik middleware
+| Service | Auth method |
+|---------|-------------|
+| Prometheus | Authelia forwardAuth |
+| Grafana | Authelia forwardAuth + auth proxy (auto-login) |
+| Dozzle | Authelia forwardAuth |
+| Beszel | Own auth (PocketBase) |
+| Loki | Not exposed (localhost only) |
+| Tempo | Not exposed (internal only) |
 
 ### Beszel agent
 
@@ -67,6 +62,13 @@ docker run -d \
   -e HUB_URL="http://beszel.barlito.fr" \
   henrygd/beszel-agent
 ```
+
+### Sending traces to Tempo
+
+Applications send traces via OpenTelemetry to Tempo on the Docker overlay network:
+
+- **gRPC**: `http://tempo:4317`
+- **HTTP**: `http://tempo:4318`
 
 ## Commands
 
