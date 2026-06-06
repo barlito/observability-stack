@@ -9,7 +9,7 @@ Self-hosted monitoring stack running on Docker Swarm behind Traefik.
 | **Prometheus** | Metrics collection & storage | `prometheus.local.barlito.fr` | `prometheus.barlito.fr` |
 | **Grafana** | Dashboards (metrics, logs, traces) | `grafana.local.barlito.fr` | `grafana.barlito.fr` |
 | **Loki** | Log aggregation | Internal (overlay only) | Internal (overlay only) |
-| **Alloy** | Log collection (Docker discovery, one agent per node) | Internal | Internal |
+| **Alloy** | Log collection (Docker discovery, one agent per node) | `alloy.local.barlito.fr` | `alloy.barlito.fr` |
 | **Tempo** | Distributed tracing (OTel receiver) | Internal (port 4317/4318) | Internal (port 4317/4318) |
 | **Dozzle** | Real-time Docker log viewer | `dozzle.local.barlito.fr` | `dozzle.barlito.fr` |
 | **Beszel** | Server & container monitoring | `beszel.local.barlito.fr` | `beszel.barlito.fr` |
@@ -37,6 +37,7 @@ No `.env` file needed — authentication is handled by Authelia via Traefik forw
 | Prometheus | Authelia forwardAuth |
 | Grafana | Authelia forwardAuth + auth proxy (auto-login as server admin) |
 | Dozzle | Authelia forwardAuth + forward-proxy (auto-login) |
+| Alloy (debug UI) | Authelia forwardAuth |
 | Beszel | Own auth (PocketBase) |
 | Loki | Not exposed (internal only) |
 | Tempo | Not exposed (internal only) |
@@ -68,6 +69,8 @@ docker run -d \
 ### Logs (Alloy → Loki)
 
 Alloy runs as a global service (one agent per node), discovers every container through the Docker socket and streams their stdout/stderr to Loki — no logging driver, no plugin, no per-stack `logging:` config needed. Containers stay on the default `json-file` driver, so `docker logs` and Dozzle keep working.
+
+The Alloy debug UI (live pipeline graph, discovered targets, component health) is exposed at `alloy.{local.}barlito.fr` behind Authelia.
 
 Available Loki labels:
 

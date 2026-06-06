@@ -79,16 +79,32 @@ services:
 
     alloy:
         image: grafana/alloy:latest
-        command: run /etc/alloy/config.alloy
+        # 0.0.0.0 so Traefik can reach the debug UI; storage.path persists read
+        # positions across restarts (avoids re-ingesting logs into Loki)
+        command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
         volumes:
             - ./alloy:/etc/alloy
+            - alloy_data:/var/lib/alloy/data
             - /var/run/docker.sock:/var/run/docker.sock:ro
         deploy:
             # One agent per node: collects logs of all local containers via the
             # Docker API and pushes them to Loki over the overlay network
             mode: global
+            labels:
+                - traefik.enable=true
+
+                - traefik.http.services.obs_alloy.loadbalancer.server.port=12345
+
+                - traefik.http.routers.obs_alloy.rule=Host(`alloy.local.barlito.fr`)
+                - traefik.http.routers.obs_alloy.entrypoints=http
+
+                - traefik.http.routers.obs_alloy-secure.rule=Host(`alloy.local.barlito.fr`)
+                - traefik.http.routers.obs_alloy-secure.entrypoints=https
+                - traefik.http.routers.obs_alloy-secure.tls=true
+                - traefik.http.routers.obs_alloy-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - obs_internal
+            - traefik_traefik_proxy
 
     dozzle:
         image: amir20/dozzle:latest
@@ -152,6 +168,7 @@ volumes:
     loki_data:
     beszel_data:
     tempo_data:
+    alloy_data:
 
 networks:
     traefik_traefik_proxy:
