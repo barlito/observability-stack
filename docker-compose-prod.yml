@@ -32,6 +32,10 @@ services:
     grafana:
         image: grafana/grafana
         environment:
+            GF_SERVER_ROOT_URL: https://grafana.barlito.fr
+            # Built-in admin account named after the Authelia user, so the auth
+            # proxy login (Remote-User: barlito) lands on the server admin account
+            GF_SECURITY_ADMIN_USER: barlito
             GF_AUTH_PROXY_ENABLED: "true"
             GF_AUTH_PROXY_HEADER_NAME: Remote-User
             GF_AUTH_PROXY_HEADER_PROPERTY: username
@@ -70,8 +74,6 @@ services:
     loki:
         image: grafana/loki:3.4
         command: -config.file=/etc/loki/loki.yml
-        ports:
-            - 127.0.0.1:3100:3100
         volumes:
             - ./loki:/etc/loki
             - loki_data:/loki
@@ -95,8 +97,26 @@ services:
         networks:
             - obs_internal
 
+    alloy:
+        image: grafana/alloy:latest
+        command: run /etc/alloy/config.alloy
+        volumes:
+            - ./alloy:/etc/alloy
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+        deploy:
+            # One agent per node: collects logs of all local containers via the
+            # Docker API and pushes them to Loki over the overlay network
+            mode: global
+            update_config:
+                order: stop-first
+        networks:
+            - obs_internal
+
     dozzle:
         image: amir20/dozzle:latest
+        environment:
+            # Reads Remote-User/Remote-Email/Remote-Name headers set by Authelia
+            DOZZLE_AUTH_PROVIDER: forward-proxy
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock:ro
         deploy:

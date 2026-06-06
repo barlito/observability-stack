@@ -8,7 +8,8 @@ Self-hosted monitoring stack running on Docker Swarm behind Traefik.
 |---------|------|-------|------|
 | **Prometheus** | Metrics collection & storage | `prometheus.local.barlito.fr` | `prometheus.barlito.fr` |
 | **Grafana** | Dashboards (metrics, logs, traces) | `grafana.local.barlito.fr` | `grafana.barlito.fr` |
-| **Loki** | Log aggregation (Docker log driver) | `localhost:3100` | `127.0.0.1:3100` |
+| **Loki** | Log aggregation | Internal (overlay only) | Internal (overlay only) |
+| **Alloy** | Log collection (Docker discovery, one agent per node) | Internal | Internal |
 | **Tempo** | Distributed tracing (OTel receiver) | Internal (port 4317/4318) | Internal (port 4317/4318) |
 | **Dozzle** | Real-time Docker log viewer | `dozzle.local.barlito.fr` | `dozzle.barlito.fr` |
 | **Beszel** | Server & container monitoring | `beszel.local.barlito.fr` | `beszel.barlito.fr` |
@@ -19,7 +20,6 @@ A `log-generator` service is included in local for testing the Loki pipeline.
 
 - Docker with Swarm mode enabled (`docker swarm init`)
 - [traefik-base](https://github.com/barlito/traefik-base) stack running with `traefik_traefik_proxy` network and Authelia
-- Loki Docker log driver plugin: `docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions`
 
 ## Setup
 
@@ -35,11 +35,13 @@ No `.env` file needed — authentication is handled by Authelia via Traefik forw
 | Service | Auth method |
 |---------|-------------|
 | Prometheus | Authelia forwardAuth |
-| Grafana | Authelia forwardAuth + auth proxy (auto-login) |
-| Dozzle | Authelia forwardAuth |
+| Grafana | Authelia forwardAuth + auth proxy (auto-login as server admin) |
+| Dozzle | Authelia forwardAuth + forward-proxy (auto-login) |
 | Beszel | Own auth (PocketBase) |
-| Loki | Not exposed (localhost only) |
+| Loki | Not exposed (internal only) |
 | Tempo | Not exposed (internal only) |
+
+Grafana's built-in admin account is renamed to the Authelia username (`GF_SECURITY_ADMIN_USER`), so the auth proxy login lands directly on the server admin account. Note: this only applies on first init — if `grafana_data` already exists with an `admin` user, reset the volume or rename the user via the API.
 
 ### Beszel agent
 
@@ -59,9 +61,23 @@ docker run -d \
   -e KEY="ssh-ed25519 AAAA..." \
   -e LISTEN=45876 \
   -e TOKEN="<token>" \
-  -e HUB_URL="http://beszel.barlito.fr" \
+  -e HUB_URL="https://beszel.barlito.fr" \
   henrygd/beszel-agent
 ```
+
+### Logs (Alloy → Loki)
+
+Alloy runs as a global service (one agent per node), discovers every container through the Docker socket and streams their stdout/stderr to Loki — no logging driver, no plugin, no per-stack `logging:` config needed. Containers stay on the default `json-file` driver, so `docker logs` and Dozzle keep working.
+
+Available Loki labels:
+
+| Label | Example |
+|-------|---------|
+| `container` | `obs_grafana.1.xyz` |
+| `service` | `obs_grafana` |
+| `stack` | `obs` |
+
+> Migration note: the old `grafana/loki-docker-driver` plugin is no longer needed. Remove `logging:` blocks from other stacks, redeploy them, then `docker plugin disable loki && docker plugin rm loki`.
 
 ### Sending traces to Tempo
 
