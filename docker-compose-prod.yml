@@ -8,17 +8,22 @@ services:
             - ./prometheus:/etc/prometheus
             - prom_data:/prometheus
         deploy:
+            replicas: 1
+            update_config:
+                order: stop-first
             labels:
                 - traefik.enable=true
 
                 - traefik.http.services.obs_prometheus.loadbalancer.server.port=9090
 
-                - traefik.http.routers.obs_prometheus.rule=Host(`prometheus.local.barlito.fr`)
+                - traefik.http.routers.obs_prometheus.rule=Host(`prometheus.barlito.fr`)
                 - traefik.http.routers.obs_prometheus.entrypoints=http
+                - traefik.http.routers.obs_prometheus.middlewares=redirect-to-https@file
 
-                - traefik.http.routers.obs_prometheus-secure.rule=Host(`prometheus.local.barlito.fr`)
+                - traefik.http.routers.obs_prometheus-secure.rule=Host(`prometheus.barlito.fr`)
                 - traefik.http.routers.obs_prometheus-secure.entrypoints=https
                 - traefik.http.routers.obs_prometheus-secure.tls=true
+                - traefik.http.routers.obs_prometheus-secure.tls.certresolver=letsencrypt
                 - traefik.http.routers.obs_prometheus-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - obs_internal
@@ -27,7 +32,7 @@ services:
     grafana:
         image: grafana/grafana
         environment:
-            GF_SERVER_ROOT_URL: https://grafana.local.barlito.fr
+            GF_SERVER_ROOT_URL: https://grafana.barlito.fr
             # Built-in admin account named after the Authelia user, so the auth
             # proxy login (Remote-User: barlito) lands on the server admin account
             GF_SECURITY_ADMIN_USER: barlito
@@ -39,23 +44,30 @@ services:
             GF_AUTH_BASIC_ENABLED: "false"
             GF_AUTH_DISABLE_LOGIN_FORM: "true"
             GF_USERS_ALLOW_SIGN_UP: "false"
+            GF_SECURITY_COOKIE_SECURE: "true"
+            GF_SECURITY_STRICT_TRANSPORT_SECURITY: "true"
         volumes:
             - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
             - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
             - ./grafana/dashboards:/var/lib/grafana/dashboards
             - grafana_data:/var/lib/grafana
         deploy:
+            replicas: 1
+            update_config:
+                order: stop-first
             labels:
                 - traefik.enable=true
 
                 - traefik.http.services.obs_grafana.loadbalancer.server.port=3000
 
-                - traefik.http.routers.obs_grafana.rule=Host(`grafana.local.barlito.fr`)
+                - traefik.http.routers.obs_grafana.rule=Host(`grafana.barlito.fr`)
                 - traefik.http.routers.obs_grafana.entrypoints=http
+                - traefik.http.routers.obs_grafana.middlewares=redirect-to-https@file
 
-                - traefik.http.routers.obs_grafana-secure.rule=Host(`grafana.local.barlito.fr`)
+                - traefik.http.routers.obs_grafana-secure.rule=Host(`grafana.barlito.fr`)
                 - traefik.http.routers.obs_grafana-secure.entrypoints=https
                 - traefik.http.routers.obs_grafana-secure.tls=true
+                - traefik.http.routers.obs_grafana-secure.tls.certresolver=letsencrypt
                 - traefik.http.routers.obs_grafana-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - obs_internal
@@ -67,6 +79,10 @@ services:
         volumes:
             - ./loki:/etc/loki
             - loki_data:/loki
+        deploy:
+            replicas: 1
+            update_config:
+                order: stop-first
         networks:
             - obs_internal
 
@@ -76,6 +92,10 @@ services:
         volumes:
             - ./tempo:/etc/tempo
             - tempo_data:/var/tempo
+        deploy:
+            replicas: 1
+            update_config:
+                order: stop-first
         # obs_ingest is the ONLY obs network application stacks join: it exposes
         # Tempo (OTLP 4317/4318) to them and nothing else — apps never see
         # Prometheus/Grafana/Loki, which stay on the private obs_internal network.
@@ -96,17 +116,21 @@ services:
             # One agent per node: collects logs of all local containers via the
             # Docker API and pushes them to Loki over the overlay network
             mode: global
+            update_config:
+                order: stop-first
             labels:
                 - traefik.enable=true
 
                 - traefik.http.services.obs_alloy.loadbalancer.server.port=12345
 
-                - traefik.http.routers.obs_alloy.rule=Host(`alloy.local.barlito.fr`)
+                - traefik.http.routers.obs_alloy.rule=Host(`alloy.barlito.fr`)
                 - traefik.http.routers.obs_alloy.entrypoints=http
+                - traefik.http.routers.obs_alloy.middlewares=redirect-to-https@file
 
-                - traefik.http.routers.obs_alloy-secure.rule=Host(`alloy.local.barlito.fr`)
+                - traefik.http.routers.obs_alloy-secure.rule=Host(`alloy.barlito.fr`)
                 - traefik.http.routers.obs_alloy-secure.entrypoints=https
                 - traefik.http.routers.obs_alloy-secure.tls=true
+                - traefik.http.routers.obs_alloy-secure.tls.certresolver=letsencrypt
                 - traefik.http.routers.obs_alloy-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - obs_internal
@@ -120,17 +144,22 @@ services:
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock:ro
         deploy:
+            replicas: 1
+            update_config:
+                order: stop-first
             labels:
                 - traefik.enable=true
 
                 - traefik.http.services.obs_dozzle.loadbalancer.server.port=8080
 
-                - traefik.http.routers.obs_dozzle.rule=Host(`dozzle.local.barlito.fr`)
+                - traefik.http.routers.obs_dozzle.rule=Host(`dozzle.barlito.fr`)
                 - traefik.http.routers.obs_dozzle.entrypoints=http
+                - traefik.http.routers.obs_dozzle.middlewares=redirect-to-https@file
 
-                - traefik.http.routers.obs_dozzle-secure.rule=Host(`dozzle.local.barlito.fr`)
+                - traefik.http.routers.obs_dozzle-secure.rule=Host(`dozzle.barlito.fr`)
                 - traefik.http.routers.obs_dozzle-secure.entrypoints=https
                 - traefik.http.routers.obs_dozzle-secure.tls=true
+                - traefik.http.routers.obs_dozzle-secure.tls.certresolver=letsencrypt
                 - traefik.http.routers.obs_dozzle-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - traefik_traefik_proxy
@@ -146,9 +175,8 @@ services:
         volumes:
             - /proc:/host/proc:ro
             - /sys:/host/sys:ro
-            - /:/host:ro
+            - /:/host:ro,rslave
         deploy:
-            # One per node
             mode: global
         networks:
             - obs_internal
@@ -165,19 +193,9 @@ services:
             - /var/run/docker.sock:/var/run/docker.sock:ro
             - /sys:/sys:ro
             - /var/lib/docker/:/var/lib/docker:ro
+            - /dev/disk/:/dev/disk:ro
         deploy:
             mode: global
-        networks:
-            - obs_internal
-
-    log-generator:
-        image: alpine:latest
-        command: >
-            sh -c 'i=0; while true; do
-            i=$$((i+1));
-            level=$$([ $$((i % 10)) -eq 0 ] && echo "error" || ([ $$((i % 4)) -eq 0 ] && echo "warn" || echo "info"));
-            echo "{\"level\":\"$$level\",\"msg\":\"request processed\",\"request_id\":$$i,\"duration_ms\":$$((RANDOM % 500))}";
-            sleep 5; done'
         networks:
             - obs_internal
 
@@ -195,7 +213,6 @@ networks:
     # reachable from application stacks.
     obs_internal:
         driver: overlay
-        attachable: true
     # Trace-ingestion network shared with application stacks. Only Tempo is
     # attached to it, so apps that join it can reach Tempo and nothing else.
     obs_ingest:
