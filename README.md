@@ -62,6 +62,19 @@ make deploy.prod     # Production
 
 No `.env` file needed — authentication is handled by Authelia via Traefik forwardAuth. Grafana uses auth proxy mode (auto-login from the Authelia session).
 
+### CI deploy (production)
+
+`.github/workflows/deploy.yml` deploys to the prod Swarm over SSH (`docker stack deploy` via `DOCKER_HOST=ssh://…`). Trigger it manually from the Actions tab (**workflow_dispatch**); tick `undeploy` for a clean redeploy. No app secrets are needed (auth is Authelia's job) — only the connection to the server:
+
+| Kind | Name | Example |
+|------|------|---------|
+| Variable | `SERVER_USERNAME` | `barlito` |
+| Variable | `SERVER_HOST` | `barlito.fr` |
+| Variable | `SERVER_PORT` | `22` |
+| Secret | `SSH_PRIVATE_KEY` | deploy key with access to the Swarm manager |
+
+Deploy [traefik-base](https://github.com/barlito/traefik-base) **first** — this stack depends on its external `traefik_traefik_proxy` network and Authelia.
+
 ## Networks
 
 | Network | Scope | Members |

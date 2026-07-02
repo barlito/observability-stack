@@ -1,0 +1,52 @@
+name: Deploy Observability Stack
+
+on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      undeploy:
+        description: 'Full restart: undeploy first, then deploy (clean state)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # Runs docker commands against the remote Swarm manager over SSH.
+    # No app secrets needed: auth is delegated to Authelia via Traefik.
+    env:
+      DOCKER_HOST: ssh://${{ vars.SERVER_USERNAME }}@${{ vars.SERVER_HOST }}:${{ vars.SERVER_PORT }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p ${{ vars.SERVER_PORT }} -H ${{ vars.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Undeploy stack (if restart requested)
+        if: ${{ inputs.undeploy == true }}
+        run: |
+          echo "🗑️ Undeploying stack for clean restart..."
+          make undeploy
+          echo "⏳ Waiting for stack to be fully removed..."
+          sleep 5
+
+      - name: Deploy stack
+        run: make deploy.prod
+
+      - name: Verify deployment
+        run: |
+          echo "⏳ Waiting for services to converge..."
+          sleep 10
+          docker service ls
+          docker service ps obs_prometheus --no-trunc
+          docker service ps obs_grafana --no-trunc
