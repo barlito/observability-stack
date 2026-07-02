@@ -23,8 +23,6 @@ storage:
 metrics_generator:
   storage:
     path: /var/tempo/metrics
-  traces_storage:
-    path: /var/tempo/traces
   processor:
     service_graphs:
       dimensions:

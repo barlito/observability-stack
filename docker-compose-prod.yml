@@ -47,7 +47,9 @@ services:
             GF_SECURITY_COOKIE_SECURE: "true"
             GF_SECURITY_STRICT_TRANSPORT_SECURITY: "true"
         volumes:
-            - ./grafana:/etc/grafana/provisioning/datasources
+            - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+            - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+            - ./grafana/dashboards:/var/lib/grafana/dashboards
             - grafana_data:/var/lib/grafana
         deploy:
             replicas: 1
@@ -94,8 +96,12 @@ services:
             replicas: 1
             update_config:
                 order: stop-first
+        # obs_ingest is the ONLY obs network application stacks join: it exposes
+        # Tempo (OTLP 4317/4318) to them and nothing else — apps never see
+        # Prometheus/Grafana/Loki, which stay on the private obs_internal network.
         networks:
             - obs_internal
+            - obs_ingest
 
     alloy:
         image: grafana/alloy:latest
@@ -158,42 +164,57 @@ services:
         networks:
             - traefik_traefik_proxy
 
-    beszel:
-        image: henrygd/beszel
+    node-exporter:
+        image: prom/node-exporter:latest
+        # Host metrics (CPU, RAM, disk, network). Mounts host fs read-only.
+        command:
+            - '--path.rootfs=/host'
+            - '--path.procfs=/host/proc'
+            - '--path.sysfs=/host/sys'
+            - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
         volumes:
-            - beszel_data:/beszel_data
+            - /proc:/host/proc:ro
+            - /sys:/host/sys:ro
+            - /:/host:ro,rslave
         deploy:
-            replicas: 1
-            update_config:
-                order: stop-first
-            labels:
-                - traefik.enable=true
-
-                - traefik.http.services.obs_beszel.loadbalancer.server.port=8090
-
-                - traefik.http.routers.obs_beszel.rule=Host(`beszel.barlito.fr`)
-                - traefik.http.routers.obs_beszel.entrypoints=http
-                - traefik.http.routers.obs_beszel.middlewares=redirect-to-https@file
-
-                - traefik.http.routers.obs_beszel-secure.rule=Host(`beszel.barlito.fr`)
-                - traefik.http.routers.obs_beszel-secure.entrypoints=https
-                - traefik.http.routers.obs_beszel-secure.tls=true
-                - traefik.http.routers.obs_beszel-secure.tls.certresolver=letsencrypt
-                - traefik.http.routers.obs_beszel-secure.middlewares=security-headers@file
+            mode: global
         networks:
             - obs_internal
-            - traefik_traefik_proxy
+
+    cadvisor:
+        image: gcr.io/cadvisor/cadvisor:latest
+        # Per-container metrics (CPU, RAM, net, fs) from the Docker engine
+        command:
+            - '--docker_only=true'
+            - '--housekeeping_interval=30s'
+        volumes:
+            - /:/rootfs:ro
+            # Only the Docker socket, not the whole /var/run (least privilege)
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+            - /sys:/sys:ro
+            - /var/lib/docker/:/var/lib/docker:ro
+            - /dev/disk/:/dev/disk:ro
+        deploy:
+            mode: global
+        networks:
+            - obs_internal
 
 volumes:
     prom_data:
     grafana_data:
     loki_data:
-    beszel_data:
     tempo_data:
     alloy_data:
 
 networks:
     traefik_traefik_proxy:
         external: true
+    # Private stack network: Prometheus, Grafana, Loki, Tempo, exporters. Not
+    # reachable from application stacks.
     obs_internal:
         driver: overlay
+    # Trace-ingestion network shared with application stacks. Only Tempo is
+    # attached to it, so apps that join it can reach Tempo and nothing else.
+    obs_ingest:
+        driver: overlay
+        attachable: true
