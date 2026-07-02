@@ -2,24 +2,56 @@
 
 Self-hosted monitoring stack running on Docker Swarm behind Traefik.
 
-## Services
+## At a glance
 
-| Service | Role | Local | Prod |
-|---------|------|-------|------|
-| **Prometheus** | Metrics collection & storage | `prometheus.local.barlito.fr` | `prometheus.barlito.fr` |
-| **Grafana** | Dashboards (metrics, logs, traces) | `grafana.local.barlito.fr` | `grafana.barlito.fr` |
-| **Loki** | Log aggregation | Internal (overlay only) | Internal (overlay only) |
-| **Alloy** | Log collection (Docker discovery, one agent per node) | `alloy.local.barlito.fr` | `alloy.barlito.fr` |
-| **Tempo** | Distributed tracing (OTel receiver) | Internal (port 4317/4318) | Internal (port 4317/4318) |
-| **Dozzle** | Real-time Docker log viewer | `dozzle.local.barlito.fr` | `dozzle.barlito.fr` |
-| **Beszel** | Server & container monitoring | `beszel.local.barlito.fr` | `beszel.barlito.fr` |
+The stack gives you the three pillars of observability — **metrics**, **logs** and **traces** — plus host/container resource monitoring, all in one Grafana:
 
-A `log-generator` service is included in local for testing the Loki pipeline.
+| Service | Pillar | What it does |
+|---------|--------|--------------|
+| **Prometheus** | Metrics | Scrapes and stores time-series metrics (30-day retention). Source of truth for all metric queries. |
+| **node-exporter** | Metrics | Exposes **host** metrics (CPU, RAM, disk, network) — one agent per Swarm node. |
+| **cAdvisor** | Metrics | Exposes **per-container** metrics (CPU, RAM, net, fs) from the Docker engine — one agent per node. |
+| **Loki** | Logs | Stores and indexes logs (30-day retention). Queried from Grafana. |
+| **Alloy** | Logs | Collects every container's stdout/stderr via the Docker API and ships it to Loki — one agent per node, no logging driver needed. |
+| **Tempo** | Traces | Receives distributed traces over OTLP (gRPC/HTTP) from your applications and stores them. |
+| **Grafana** | UI | Single pane of glass: dashboards + Explore over Prometheus, Loki and Tempo, with trace↔log↔metric correlation. |
+| **Dozzle** | Logs (live) | Lightweight real-time Docker log viewer (no storage) for quick tailing. |
+
+Everything is pre-wired: datasources and dashboards are provisioned automatically, and the three datasources are cross-linked (a trace in Tempo links to its logs in Loki and its service metrics in Prometheus).
+
+## Services & URLs
+
+| Service | Local | Prod |
+|---------|-------|------|
+| **Grafana** | `grafana.local.barlito.fr` | `grafana.barlito.fr` |
+| **Prometheus** | `prometheus.local.barlito.fr` | `prometheus.barlito.fr` |
+| **Dozzle** | `dozzle.local.barlito.fr` | `dozzle.barlito.fr` |
+| **Alloy** (debug UI) | `alloy.local.barlito.fr` | `alloy.barlito.fr` |
+| **Loki** | Internal only (overlay) | Internal only (overlay) |
+| **Tempo** | Internal — OTLP `4317`/`4318` | Internal — OTLP `4317`/`4318` |
+| **node-exporter** | Internal (metrics only) | Internal (metrics only) |
+| **cAdvisor** | Internal (metrics only) | Internal (metrics only) |
+
+A `log-generator` service is included in local only, to exercise the Loki pipeline.
+
+## Provisioned dashboards
+
+Grafana loads these on startup (`grafana/dashboards/`, no manual import):
+
+| Dashboard | Covers |
+|-----------|--------|
+| Node Exporter Full | Host CPU / RAM / disk / network |
+| cAdvisor | Per-container resource usage |
+| Prometheus Overview | Prometheus itself |
+| Loki Logs | Log explorer (filter by `service_name`) |
+| Traefik | Ingress traffic, latencies, status codes |
+
+> **WSL note:** the cAdvisor dashboard stays empty on WSL2 — its cgroup v1 layout doesn't expose per-container cgroups to cAdvisor. It works on a real Linux server (prod).
 
 ## Prerequisites
 
 - Docker with Swarm mode enabled (`docker swarm init`)
-- [traefik-base](https://github.com/barlito/traefik-base) stack running with `traefik_traefik_proxy` network and Authelia
+- [traefik-base](https://github.com/barlito/traefik-base) stack running with the `traefik_traefik_proxy` network and Authelia
 
 ## Setup
 
@@ -28,45 +60,31 @@ make deploy          # Local
 make deploy.prod     # Production
 ```
 
-No `.env` file needed — authentication is handled by Authelia via Traefik forwardAuth. Grafana uses auth proxy mode (auto-login from Authelia session).
+No `.env` file needed — authentication is handled by Authelia via Traefik forwardAuth. Grafana uses auth proxy mode (auto-login from the Authelia session).
+
+## Networks
+
+| Network | Scope | Members |
+|---------|-------|---------|
+| `obs_internal` | **Private** to the stack | Prometheus, Grafana, Loki, Tempo, exporters. Not reachable from app stacks. |
+| `obs_ingest` | **Shared** with app stacks | **Tempo only.** Apps join this network to push traces and can reach nothing else in the stack. |
+| `traefik_traefik_proxy` | External (traefik-base) | Services exposed through Traefik. |
+
+The split means an application stack that emits traces gets access to Tempo **and nothing else** — Prometheus, Grafana and Loki remain invisible to it.
 
 ### Auth
 
 | Service | Auth method |
 |---------|-------------|
-| Prometheus | Authelia forwardAuth |
 | Grafana | Authelia forwardAuth + auth proxy (auto-login as server admin) |
+| Prometheus | Authelia forwardAuth |
 | Dozzle | Authelia forwardAuth + forward-proxy (auto-login) |
 | Alloy (debug UI) | Authelia forwardAuth |
-| Beszel | Own auth (PocketBase) |
-| Loki | Not exposed (internal only) |
-| Tempo | Not exposed (internal only) |
+| Loki / Tempo | Not exposed (internal only) |
 
 Grafana's built-in admin account is renamed to the Authelia username (`GF_SECURITY_ADMIN_USER`), so the auth proxy login lands directly on the server admin account. Note: this only applies on first init — if `grafana_data` already exists with an `admin` user, reset the volume or rename the user via the API.
 
-### Beszel agent
-
-The Beszel agent runs standalone with `--network host` (not inside the Swarm stack) to get full system metrics.
-
-1. Open the Beszel hub and create an account
-2. Click **Add system** — Beszel generates a `docker run` command with the KEY and TOKEN
-3. Run the generated command, replacing `HUB_URL` with the Traefik URL:
-
-```bash
-docker run -d \
-  --name beszel-agent \
-  --network host \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v beszel_agent_data:/var/lib/beszel-agent \
-  -e KEY="ssh-ed25519 AAAA..." \
-  -e LISTEN=45876 \
-  -e TOKEN="<token>" \
-  -e HUB_URL="https://beszel.barlito.fr" \
-  henrygd/beszel-agent
-```
-
-### Logs (Alloy → Loki)
+## Logs (Alloy → Loki)
 
 Alloy runs as a global service (one agent per node), discovers every container through the Docker socket and streams their stdout/stderr to Loki — no logging driver, no plugin, no per-stack `logging:` config needed. Containers stay on the default `json-file` driver, so `docker logs` and Dozzle keep working.
 
@@ -76,18 +94,78 @@ Available Loki labels:
 
 | Label | Example |
 |-------|---------|
+| `service_name` | `obs_grafana` |
 | `container` | `obs_grafana.1.xyz` |
 | `service` | `obs_grafana` |
 | `stack` | `obs` |
 
-> Migration note: the old `grafana/loki-docker-driver` plugin is no longer needed. Remove `logging:` blocks from other stacks, redeploy them, then `docker plugin disable loki && docker plugin rm loki`.
+## Metrics from your apps
 
-### Sending traces to Tempo
+Prometheus already scrapes itself, node-exporter, cAdvisor and Traefik (see `prometheus/prometheus.yml`). To scrape one of your applications, expose a `/metrics` endpoint and add a scrape job pointing at its service DNS name (the app must share a network Prometheus can reach).
 
-Applications send traces via OpenTelemetry to Tempo on the Docker overlay network:
+## Sending traces to Tempo
 
+Applications push traces via OpenTelemetry (OTLP) to Tempo:
+
+- **HTTP**: `http://tempo:4318` (recommended — no gRPC dependency)
 - **gRPC**: `http://tempo:4317`
-- **HTTP**: `http://tempo:4318`
+
+To reach `tempo`, the application stack must join the shared `obs_ingest` network (it exposes Tempo and nothing else). In each app's compose:
+
+```yaml
+services:
+  php:
+    networks:
+      - carapp_internal        # the app's own private network
+      - obs_ingest             # gives access to Tempo only
+networks:
+  carapp_internal:
+  obs_ingest:
+    name: observability-stack_obs_ingest
+    external: true
+```
+
+### PHP / Symfony
+
+Instrument with OpenTelemetry (auto-instrumentation, no code changes):
+
+```bash
+pecl install opentelemetry        # PHP extension, then enable extension=opentelemetry.so
+composer require \
+  open-telemetry/sdk \
+  open-telemetry/exporter-otlp \
+  open-telemetry/opentelemetry-auto-symfony \
+  open-telemetry/opentelemetry-auto-psr18      # traces outgoing HttpClient
+# optional: -auto-doctrine (SQL), -auto-psr3 (correlate logs with traces)
+```
+
+Configure entirely via environment variables:
+
+```env
+OTEL_PHP_AUTOLOAD_ENABLED=true
+OTEL_SERVICE_NAME=carapp                       # name shown in Tempo
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318
+OTEL_PROPAGATORS=tracecontext,baggage
+```
+
+### Quick test
+
+Generate a few traces from any host on the `obs_ingest` network:
+
+```bash
+docker run --rm --network observability-stack_obs_ingest \
+  ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
+  traces --otlp-endpoint tempo:4318 --otlp-http --traces 10 --service test-tempo
+```
+
+Then in Grafana → Explore → Tempo → Search, filter by service name `test-tempo`.
+
+## Security notes
+
+- Every Docker socket mount (Alloy, Dozzle, cAdvisor) is read-only, and cAdvisor mounts only `/var/run/docker.sock` rather than the whole `/var/run`.
+- ⚠️ A read-only socket mount still exposes the **full** Docker API to the container. Hardening these behind a scoped `docker-socket-proxy` (read-only, whitelisted endpoints) is tracked as a separate phase.
 
 ## Commands
 
@@ -104,3 +182,5 @@ make logs service=grafana    # Follow logs for a service
 
 - **Prometheus**: 30 days
 - **Loki**: 30 days (compactor purges expired chunks)
+</content>
+</invoke>
