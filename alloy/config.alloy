@@ -1,6 +1,8 @@
-// Discover all containers running on this node via the Docker socket
+// Discover all containers running on this node via the docker-socket-proxy.
+// Alloy never touches the raw socket: it talks to the filtering proxy over TCP,
+// which only exposes read-only CONTAINERS/EVENTS/INFO endpoints.
 discovery.docker "containers" {
-	host = "unix:///var/run/docker.sock"
+	host = "tcp://dockerproxy:2375"
 }
 
 // Build Loki labels from Docker/Swarm metadata
@@ -24,9 +26,9 @@ discovery.relabel "containers" {
 	}
 }
 
-// Stream container logs through the Docker API
+// Stream container logs through the Docker API (via the docker-socket-proxy)
 loki.source.docker "containers" {
-	host       = "unix:///var/run/docker.sock"
+	host       = "tcp://dockerproxy:2375"
 	targets    = discovery.relabel.containers.output
 	forward_to = [loki.write.default.receiver]
 }
