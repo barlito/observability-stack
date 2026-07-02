@@ -128,7 +128,6 @@ services:
         command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
         volumes:
             - alloy_data:/var/lib/alloy/data
-            - /var/run/docker.sock:/var/run/docker.sock:ro
         configs:
             - source: obs_alloy_cfg
               target: /etc/alloy/config.alloy
@@ -161,8 +160,9 @@ services:
         environment:
             # Reads Remote-User/Remote-Email/Remote-Name headers set by Authelia
             DOZZLE_AUTH_PROVIDER: forward-proxy
-        volumes:
-            - /var/run/docker.sock:/var/run/docker.sock:ro
+            # Talk to the Docker API through the read-only docker-socket-proxy
+            # instead of bind-mounting the raw socket (which :ro does NOT secure).
+            DOZZLE_REMOTE_HOST: tcp://dockerproxy:2375
         deploy:
             replicas: 1
             update_config:
@@ -182,6 +182,8 @@ services:
                 - traefik.http.routers.obs_dozzle-secure.tls.certresolver=letsencrypt
                 - traefik.http.routers.obs_dozzle-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
+            # obs_internal added so Dozzle can reach the docker-socket-proxy
+            - obs_internal
             - traefik_traefik_proxy
 
     node-exporter:
@@ -209,13 +211,43 @@ services:
             - '--housekeeping_interval=30s'
         volumes:
             - /:/rootfs:ro
-            # Only the Docker socket, not the whole /var/run (least privilege)
+            # DOCUMENTED EXCEPTION: cAdvisor keeps its direct read-only socket.
+            # It is deeply host-coupled (reads cgroups and /var/lib/docker from
+            # the host) and cannot practically go through the TCP socket-proxy.
+            # It is not network-exposed (obs_internal only, no Traefik labels).
             - /var/run/docker.sock:/var/run/docker.sock:ro
             - /sys:/sys:ro
             - /var/lib/docker/:/var/lib/docker:ro
             - /dev/disk/:/dev/disk:ro
         deploy:
             mode: global
+        networks:
+            - obs_internal
+
+    # Read-only Docker API proxy in front of the raw socket. alloy and dozzle
+    # talk to this over TCP instead of bind-mounting /var/run/docker.sock
+    # (a :ro socket mount does NOT restrict API calls). Only CONTAINERS/EVENTS/
+    # INFO are whitelisted and every write is refused (POST=0). Pinned to a
+    # manager node; it is the only service here that touches the real socket.
+    # Env-only config, so no Swarm config object is needed.
+    dockerproxy:
+        image: ghcr.io/tecnativa/docker-socket-proxy:latest
+        environment:
+            CONTAINERS: 1   # /containers/json + per-container log streaming
+            NETWORKS: 1     # /networks — alloy's discovery.docker reads it for network labels
+            EVENTS: 1       # Docker event stream (container start/stop)
+            INFO: 1         # /info (engine metadata)
+            POST: 0         # reject every write/mutating call
+            LOG_LEVEL: warning
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+        deploy:
+            replicas: 1
+            update_config:
+                order: stop-first
+            placement:
+                constraints:
+                    - node.role == manager
         networks:
             - obs_internal
 
