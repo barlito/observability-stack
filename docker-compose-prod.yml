@@ -5,8 +5,10 @@ services:
             - '--config.file=/etc/prometheus/prometheus.yml'
             - '--storage.tsdb.retention.time=30d'
         volumes:
-            - ./prometheus:/etc/prometheus
             - prom_data:/prometheus
+        configs:
+            - source: obs_prometheus_cfg
+              target: /etc/prometheus/prometheus.yml
         deploy:
             replicas: 1
             update_config:
@@ -47,10 +49,22 @@ services:
             GF_SECURITY_COOKIE_SECURE: "true"
             GF_SECURITY_STRICT_TRANSPORT_SECURITY: "true"
         volumes:
-            - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
-            - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
-            - ./grafana/dashboards:/var/lib/grafana/dashboards
             - grafana_data:/var/lib/grafana
+        configs:
+            - source: obs_gf_datasources
+              target: /etc/grafana/provisioning/datasources/datasources.yml
+            - source: obs_gf_dashprovider
+              target: /etc/grafana/provisioning/dashboards/dashboards.yml
+            - source: obs_gf_dash_node
+              target: /var/lib/grafana/dashboards/node-exporter-full.json
+            - source: obs_gf_dash_cadvisor
+              target: /var/lib/grafana/dashboards/cadvisor.json
+            - source: obs_gf_dash_prom
+              target: /var/lib/grafana/dashboards/prometheus-overview.json
+            - source: obs_gf_dash_loki
+              target: /var/lib/grafana/dashboards/loki-logs.json
+            - source: obs_gf_dash_traefik
+              target: /var/lib/grafana/dashboards/traefik.json
         deploy:
             replicas: 1
             update_config:
@@ -77,8 +91,10 @@ services:
         image: grafana/loki:3.4
         command: -config.file=/etc/loki/loki.yml
         volumes:
-            - ./loki:/etc/loki
             - loki_data:/loki
+        configs:
+            - source: obs_loki_cfg
+              target: /etc/loki/loki.yml
         deploy:
             replicas: 1
             update_config:
@@ -90,8 +106,10 @@ services:
         image: grafana/tempo:latest
         command: -config.file=/etc/tempo/tempo.yml
         volumes:
-            - ./tempo:/etc/tempo
             - tempo_data:/var/tempo
+        configs:
+            - source: obs_tempo_cfg
+              target: /etc/tempo/tempo.yml
         deploy:
             replicas: 1
             update_config:
@@ -109,9 +127,11 @@ services:
         # positions across restarts (avoids re-ingesting logs into Loki)
         command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
         volumes:
-            - ./alloy:/etc/alloy
             - alloy_data:/var/lib/alloy/data
             - /var/run/docker.sock:/var/run/docker.sock:ro
+        configs:
+            - source: obs_alloy_cfg
+              target: /etc/alloy/config.alloy
         deploy:
             # One agent per node: collects logs of all local containers via the
             # Docker API and pushes them to Loki over the overlay network
@@ -198,6 +218,46 @@ services:
             mode: global
         networks:
             - obs_internal
+
+# Config files shipped inside the Swarm (raft store) at deploy time — nothing
+# lives on the server filesystem. Names are suffixed with CONFIG_VERSION (a hash
+# of the files, computed in `make deploy.prod`): any content change yields a new
+# config object, so Swarm does a rolling update instead of hitting the
+# "only updates to Labels are allowed" immutability error.
+configs:
+    obs_prometheus_cfg:
+        file: ./prometheus/prometheus.yml
+        name: obs_prometheus_cfg_${CONFIG_VERSION:-dev}
+    obs_loki_cfg:
+        file: ./loki/loki.yml
+        name: obs_loki_cfg_${CONFIG_VERSION:-dev}
+    obs_tempo_cfg:
+        file: ./tempo/tempo.yml
+        name: obs_tempo_cfg_${CONFIG_VERSION:-dev}
+    obs_alloy_cfg:
+        file: ./alloy/config.alloy
+        name: obs_alloy_cfg_${CONFIG_VERSION:-dev}
+    obs_gf_datasources:
+        file: ./grafana/provisioning/datasources/datasources.yml
+        name: obs_gf_datasources_${CONFIG_VERSION:-dev}
+    obs_gf_dashprovider:
+        file: ./grafana/provisioning/dashboards/dashboards.yml
+        name: obs_gf_dashprovider_${CONFIG_VERSION:-dev}
+    obs_gf_dash_node:
+        file: ./grafana/dashboards/node-exporter-full.json
+        name: obs_gf_dash_node_${CONFIG_VERSION:-dev}
+    obs_gf_dash_cadvisor:
+        file: ./grafana/dashboards/cadvisor.json
+        name: obs_gf_dash_cadvisor_${CONFIG_VERSION:-dev}
+    obs_gf_dash_prom:
+        file: ./grafana/dashboards/prometheus-overview.json
+        name: obs_gf_dash_prom_${CONFIG_VERSION:-dev}
+    obs_gf_dash_loki:
+        file: ./grafana/dashboards/loki-logs.json
+        name: obs_gf_dash_loki_${CONFIG_VERSION:-dev}
+    obs_gf_dash_traefik:
+        file: ./grafana/dashboards/traefik.json
+        name: obs_gf_dash_traefik_${CONFIG_VERSION:-dev}
 
 volumes:
     prom_data:

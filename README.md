@@ -75,6 +75,24 @@ No `.env` file needed — authentication is handled by Authelia via Traefik forw
 
 Deploy [traefik-base](https://github.com/barlito/traefik-base) **first** — this stack depends on its external `traefik_traefik_proxy` network and Authelia.
 
+### How configs are shipped (local vs prod)
+
+| | Local | Prod |
+|---|-------|------|
+| Mechanism | **Bind mounts** (`./prometheus`, `./grafana/…`) | **Swarm configs** |
+| Where the files live | The repo on your machine | Inside Swarm (raft store) — **nothing on the server disk** |
+| Editing | Edit the file, redeploy (live) | Edit the file, redeploy (content re-shipped) |
+
+Prod uses Swarm `configs:` so the CI can deploy over SSH without the repo being present on the server. Config **names are versioned** with `CONFIG_VERSION` — a hash of all config files computed by `make deploy.prod`:
+
+```makefile
+export CONFIG_VERSION=$(cat prometheus/*.yml loki/*.yml … grafana/dashboards/*.json | sha1sum | cut -c1-10)
+```
+
+Any change to a config file produces new config objects (`obs_prometheus_cfg_<hash>`, …), so Swarm performs a **rolling update** instead of failing with `only updates to Labels are allowed` (Docker configs are immutable). Old config objects are left behind harmlessly and can be pruned with `docker config rm` / `docker config prune` if desired.
+
+> Adding a dashboard in prod = drop the JSON in `grafana/dashboards/`, add a `configs:` entry (source + target) on the Grafana service and in the top-level `configs:` block, then redeploy.
+
 ## Networks
 
 | Network | Scope | Members |
