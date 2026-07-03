@@ -128,6 +128,11 @@ services:
         command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
         volumes:
             - alloy_data:/var/lib/alloy/data
+            # Traefik writes its access log to a file on the host; tailing it lets
+            # Alloy ship those access logs to Loki (they no longer go to stdout).
+            # Alloy is global, so every node that runs Traefik must expose
+            # /var/log/traefik — the bind mount is read-only.
+            - /var/log/traefik:/var/log/traefik:ro
         configs:
             - source: obs_alloy_cfg
               target: /etc/alloy/config.alloy
