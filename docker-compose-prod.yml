@@ -251,6 +251,68 @@ services:
         networks:
             - obs_internal
 
+    # Self-hosted web analytics (pageviews + custom events for app stacks).
+    # Tag pinned on purpose: Umami auto-runs its DB migrations at startup, so
+    # an unreviewed :latest bump could migrate the schema behind our back.
+    umami:
+        image: ghcr.io/umami-software/umami:postgresql-v2.19.0
+        environment:
+            DATABASE_TYPE: postgresql
+            DATABASE_URL: postgresql://umami:${UMAMI_DB_PASSWORD}@obs_umami_db:5432/umami
+            APP_SECRET: ${UMAMI_APP_SECRET}
+            DISABLE_TELEMETRY: 1
+            TZ: Europe/Paris
+        deploy:
+            replicas: 1
+            update_config:
+                order: stop-first
+            labels:
+                - traefik.enable=true
+
+                - traefik.http.services.obs_umami.loadbalancer.server.port=3000
+
+                - traefik.http.routers.obs_umami.rule=Host(`umami.barlito.fr`)
+                - traefik.http.routers.obs_umami.entrypoints=http
+                - traefik.http.routers.obs_umami.middlewares=redirect-to-https@file
+
+                - traefik.http.routers.obs_umami-secure.rule=Host(`umami.barlito.fr`)
+                - traefik.http.routers.obs_umami-secure.entrypoints=https
+                - traefik.http.routers.obs_umami-secure.tls=true
+                - traefik.http.routers.obs_umami-secure.tls.certresolver=letsencrypt
+                # DOCUMENTED EXCEPTION: no authelia-auth here. /script.js and
+                # /api/send are fetched by anonymous visitors' browsers, and
+                # Umami has no proxy-header auth (DISABLE_LOGIN breaks access,
+                # umami#3751), so its own login guards the dashboard instead.
+                - traefik.http.routers.obs_umami-secure.middlewares=security-headers@file
+        networks:
+            - obs_internal
+            - traefik_traefik_proxy
+            - obs_analytics
+
+    umami_db:
+        image: postgres:18
+        environment:
+            POSTGRES_USER: umami
+            POSTGRES_PASSWORD: ${UMAMI_DB_PASSWORD}
+            POSTGRES_DB: umami
+            TZ: Europe/Paris
+            PGTZ: Europe/Paris
+        volumes:
+            # postgres:18 moved PGDATA below /var/lib/postgresql — mount the
+            # parent dir, not the pre-18 /var/lib/postgresql/data path
+            - umami_db_data:/var/lib/postgresql
+        healthcheck:
+            test: [ "CMD-SHELL", "pg_isready -U umami" ]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        deploy:
+            replicas: 1
+            update_config:
+                order: stop-first
+        networks:
+            - obs_internal
+
 # Config files shipped inside the Swarm (raft store) at deploy time — nothing
 # lives on the server filesystem. Names are suffixed with CONFIG_VERSION (a hash
 # of the files, computed in `make deploy.prod`): any content change yields a new
@@ -297,6 +359,7 @@ volumes:
     loki_data:
     tempo_data:
     alloy_data:
+    umami_db_data:
 
 networks:
     traefik_traefik_proxy:
@@ -310,3 +373,11 @@ networks:
     obs_ingest:
         driver: overlay
         attachable: true
+    # Analytics-ingestion network shared with application stacks. Only Umami
+    # is attached to it, so apps that join it (server-side /api/send events)
+    # can reach Umami and nothing else. Explicit name so consumer stacks can
+    # reference it as `external: obs_analytics` regardless of project naming.
+    obs_analytics:
+        driver: overlay
+        attachable: true
+        name: obs_analytics
