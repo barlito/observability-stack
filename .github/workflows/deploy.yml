@@ -14,9 +14,13 @@ jobs:
     runs-on: ubuntu-latest
 
     # Runs docker commands against the remote Swarm manager over SSH.
-    # No app secrets needed: auth is delegated to Authelia via Traefik.
+    # Auth is delegated to Authelia via Traefik for every service except
+    # Umami, whose own login + DB need the two secrets interpolated below
+    # into docker-compose-prod.yml at `docker compose config` time.
     env:
       DOCKER_HOST: ssh://${{ vars.SERVER_USERNAME }}@${{ vars.SERVER_HOST }}:${{ vars.SERVER_PORT }}
+      UMAMI_DB_PASSWORD: ${{ secrets.UMAMI_DB_PASSWORD }}
+      UMAMI_APP_SECRET: ${{ secrets.UMAMI_APP_SECRET }}
 
     steps:
       - name: Checkout code
@@ -50,3 +54,4 @@ jobs:
           docker service ls
           docker service ps obs_prometheus --no-trunc
           docker service ps obs_grafana --no-trunc
+          docker service ps obs_umami --no-trunc
