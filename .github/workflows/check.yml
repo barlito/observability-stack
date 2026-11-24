@@ -1,0 +1,13 @@
+name: check
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  docker-check:
+    uses: barlito/ci/.github/workflows/docker-check.yaml@v1
+    with:
+      compose-files: docker-compose-prod.yml
