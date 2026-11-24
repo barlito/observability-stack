@@ -1,0 +1,93 @@
+# Isolated end-to-end check, run with `docker compose -p obs-smoke` (see `make smoke`).
+# Images, commands and env come from docker-compose.yaml so the real config is exercised.
+services:
+    prometheus:
+        extends:
+            file: docker-compose.yaml
+            service: prometheus
+        volumes: !override
+            - ./prometheus:/etc/prometheus
+        labels: !reset null
+        deploy: !reset null
+        networks: !override [default]
+
+    loki:
+        extends:
+            file: docker-compose.yaml
+            service: loki
+        volumes: !override
+            - ./loki:/etc/loki
+        networks: !override [default]
+
+    tempo:
+        extends:
+            file: docker-compose.yaml
+            service: tempo
+        volumes: !override
+            - ./tempo:/etc/tempo
+        networks: !override [default]
+
+    dockerproxy:
+        extends:
+            file: docker-compose.yaml
+            service: dockerproxy
+        deploy: !reset null
+        networks: !override [default]
+
+    node-exporter:
+        extends:
+            file: docker-compose.yaml
+            service: node-exporter
+        deploy: !reset null
+        networks: !override [default]
+
+    alloy:
+        extends:
+            file: docker-compose.yaml
+            service: alloy
+        environment: !override
+            SERVER_NAME: local
+            DEPLOY_ENV: development
+            HOST_NAME: smoke-host
+            LOKI_URL: http://loki:3100/loki/api/v1/push
+            PROM_RW_URL: http://prometheus:9090/api/v1/write
+            OTLP_URL: tempo:4317
+        volumes: !override
+            - ./alloy:/etc/alloy
+        deploy: !reset null
+        networks: !override
+            default:
+                aliases:
+                    - otlp
+        depends_on:
+            - loki
+            - prometheus
+            - tempo
+            - dockerproxy
+
+    # Serves a cAdvisor-style series so the container label mapping is checked
+    # without a real cAdvisor (unusable on WSL).
+    cadvisor:
+        image: alpine:3.24
+        volumes:
+            - ./smoke/cadvisor.metrics:/metrics:ro
+        command: >
+            sh -c 'while true; do { printf "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\r\n"; cat /metrics; } | nc -l -p 8080 >/dev/null; done'
+
+    log-emitter:
+        image: alpine:3.24
+        command: >
+            sh -c 'while true; do
+            echo "connecting to postgres://app:S3cretPw@db:5432/app";
+            echo "request Authorization: Bearer abcdef0123456789token";
+            echo "config password=hunter2hunter2 loaded";
+            echo "session eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.c2lnbmF0dXJl";
+            echo "plain line without secrets";
+            sleep 2; done'
+
+    tester:
+        image: alpine:3.24
+        profiles: [test]
+        volumes:
+            - ./smoke/test.sh:/test.sh:ro
+        entrypoint: ["sh", "/test.sh"]

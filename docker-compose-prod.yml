@@ -1,9 +1,10 @@
 services:
     prometheus:
-        image: prom/prometheus
+        image: prom/prometheus:v3.16.0
         command:
             - '--config.file=/etc/prometheus/prometheus.yml'
             - '--storage.tsdb.retention.time=30d'
+            - '--web.enable-remote-write-receiver'
         volumes:
             - prom_data:/prometheus
         configs:
@@ -29,10 +30,11 @@ services:
                 - traefik.http.routers.obs_prometheus-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
             - obs_internal
+            - obs_query
             - traefik_traefik_proxy
 
     grafana:
-        image: grafana/grafana
+        image: grafana/grafana:13.3
         environment:
             GF_SERVER_ROOT_URL: https://grafana.barlito.fr
             # Built-in admin account named after the Authelia user, so the auth
@@ -101,9 +103,10 @@ services:
                 order: stop-first
         networks:
             - obs_internal
+            - obs_query
 
     tempo:
-        image: grafana/tempo:latest
+        image: grafana/tempo:3.0.5
         command: -config.file=/etc/tempo/tempo.yml
         volumes:
             - tempo_data:/var/tempo
@@ -114,31 +117,31 @@ services:
             replicas: 1
             update_config:
                 order: stop-first
-        # obs_ingest is the ONLY obs network application stacks join: it exposes
-        # Tempo (OTLP 4317/4318) to them and nothing else — apps never see
-        # Prometheus/Grafana/Loki, which stay on the private obs_internal network.
         networks:
             - obs_internal
-            - obs_ingest
+            - obs_query
 
     alloy:
-        image: grafana/alloy:latest
+        image: grafana/alloy:v1.22.0
         # 0.0.0.0 so Traefik can reach the debug UI; storage.path persists read
-        # positions across restarts (avoids re-ingesting logs into Loki)
-        command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
+        # positions and the remote-write WAL across restarts
+        command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/edge.alloy
+        environment:
+            SERVER_NAME: ovh-prod-1
+            DEPLOY_ENV: production
+            HOST_NAME: "{{.Node.Hostname}}"
+            LOKI_URL: http://loki:3100/loki/api/v1/push
+            PROM_RW_URL: http://prometheus:9090/api/v1/write
+            OTLP_URL: tempo:4317
         volumes:
             - alloy_data:/var/lib/alloy/data
-            # Traefik writes its access log to a file on the host; tailing it lets
-            # Alloy ship those access logs to Loki (they no longer go to stdout).
-            # Alloy is global, so every node that runs Traefik must expose
-            # /var/log/traefik — the bind mount is read-only.
+            # Prod only: local Traefik has no access log file
             - /var/log/traefik:/var/log/traefik:ro
         configs:
             - source: obs_alloy_cfg
-              target: /etc/alloy/config.alloy
+              target: /etc/alloy/edge.alloy
         deploy:
-            # One agent per node: collects logs of all local containers via the
-            # Docker API and pushes them to Loki over the overlay network
+            # One edge agent per node: logs, metrics and the OTLP entry point
             mode: global
             update_config:
                 order: stop-first
@@ -157,11 +160,16 @@ services:
                 - traefik.http.routers.obs_alloy-secure.tls.certresolver=letsencrypt
                 - traefik.http.routers.obs_alloy-secure.middlewares=authelia-auth@file,security-headers@file
         networks:
-            - obs_internal
-            - traefik_traefik_proxy
+            obs_internal:
+            traefik_traefik_proxy:
+            # The only obs network application stacks join: apps reach Alloy as
+            # `otlp` (4317/4318) and nothing else.
+            obs_ingest:
+                aliases:
+                    - otlp
 
     dozzle:
-        image: amir20/dozzle:latest
+        image: amir20/dozzle:v11.5
         environment:
             # Reads Remote-User/Remote-Email/Remote-Name headers set by Authelia
             DOZZLE_AUTH_PROVIDER: forward-proxy
@@ -192,7 +200,7 @@ services:
             - traefik_traefik_proxy
 
     node-exporter:
-        image: prom/node-exporter:latest
+        image: prom/node-exporter:v1.13.1
         # Host metrics (CPU, RAM, disk, network). Mounts host fs read-only.
         command:
             - '--path.rootfs=/host'
@@ -209,11 +217,13 @@ services:
             - obs_internal
 
     cadvisor:
-        image: gcr.io/cadvisor/cadvisor:latest
+        image: gcr.io/cadvisor/cadvisor:v0.55.1
         # Per-container metrics (CPU, RAM, net, fs) from the Docker engine
         command:
             - '--docker_only=true'
             - '--housekeeping_interval=30s'
+            - '--store_container_labels=false'
+            - '--whitelisted_container_labels=com.docker.stack.namespace,com.docker.swarm.service.name,com.docker.compose.project,com.docker.compose.service'
         volumes:
             - /:/rootfs:ro
             # DOCUMENTED EXCEPTION: cAdvisor keeps its direct read-only socket.
@@ -236,7 +246,7 @@ services:
     # manager node; it is the only service here that touches the real socket.
     # Env-only config, so no Swarm config object is needed.
     dockerproxy:
-        image: ghcr.io/tecnativa/docker-socket-proxy:latest
+        image: ghcr.io/tecnativa/docker-socket-proxy:v0.5.0
         environment:
             CONTAINERS: 1   # /containers/json + per-container log streaming
             NETWORKS: 1     # /networks — alloy's discovery.docker reads it for network labels
@@ -272,7 +282,7 @@ configs:
         file: ./tempo/tempo.yml
         name: obs_tempo_cfg_${CONFIG_VERSION:-dev}
     obs_alloy_cfg:
-        file: ./alloy/config.alloy
+        file: ./alloy/edge.alloy
         name: obs_alloy_cfg_${CONFIG_VERSION:-dev}
     obs_gf_datasources:
         file: ./grafana/provisioning/datasources/datasources.yml
@@ -310,8 +320,13 @@ networks:
     # reachable from application stacks.
     obs_internal:
         driver: overlay
-    # Trace-ingestion network shared with application stacks. Only Tempo is
-    # attached to it, so apps that join it can reach Tempo and nothing else.
+    # OTLP entry point shared with application stacks: only Alloy is attached.
     obs_ingest:
+        driver: overlay
+        attachable: true
+    # Read-only query path (Loki, Prometheus, Tempo) joined by ops-mcp as an
+    # external network.
+    obs_query:
+        name: obs_query
         driver: overlay
         attachable: true
