@@ -64,14 +64,15 @@ No `.env` file needed — authentication is handled by Authelia via Traefik forw
 
 ### CI deploy (production)
 
-`.github/workflows/deploy.yml` deploys to the prod Swarm over SSH (`docker stack deploy` via `DOCKER_HOST=ssh://…`). Trigger it manually from the Actions tab (**workflow_dispatch**); tick `undeploy` for a clean redeploy. No app secrets are needed (auth is Authelia's job) — only the connection to the server:
+The **deploy** workflow (manual `workflow_dispatch`) calls the reusable `swarm-deploy` workflow of [barlito/ci](https://github.com/barlito/ci), which runs `make deploy.prod` over SSH against the Swarm manager (`DOCKER_HOST=ssh://…`). The deploy is an idempotent `docker stack deploy` that waits for convergence; the stack is never removed. Pull requests run `docker-check` to validate the prod compose file. No app secrets are needed (auth is Authelia's job) — only the connection to the server, set on the `production` environment:
 
-| Kind | Name | Example |
+| Kind | Name | Purpose |
 |------|------|---------|
-| Variable | `SERVER_USERNAME` | `barlito` |
-| Variable | `SERVER_HOST` | `barlito.fr` |
-| Variable | `SERVER_PORT` | `22` |
+| Variable | `SERVER_HOST` | Server hostname |
+| Secret | `SERVER_USERNAME`, `SERVER_PORT` | SSH user and port |
+| Secret | `SERVER_HOST_KEY` | `known_hosts` line of the server ed25519 key |
 | Secret | `SSH_PRIVATE_KEY` | deploy key with access to the Swarm manager |
+| Secret | `DOCKER_HUB_USERNAME`, `DOCKER_HUB_READ_ONLY_ACCESS_TOKEN` | registry login of the deploy job |
 
 Deploy [traefik-base](https://github.com/barlito/traefik-base) **first** — this stack depends on its external `traefik_traefik_proxy` network and Authelia.
 
