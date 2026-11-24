@@ -2,8 +2,8 @@ stack_name=obs
 smoke_project=obs-smoke
 compose_smoke=docker compose -p $(smoke_project) -f docker-compose.smoke.yml
 
-# Image of a service, read from the compose file so tags are defined once.
-image=$$(docker compose -f docker-compose.yaml config --images 2>/dev/null | grep '$(1)')
+# Image of a service in compose file $$f, so tags are defined once per file.
+image=$$(docker compose -f $$f config --images 2>/dev/null | grep '$(1)')
 
 .PHONY: deploy
 deploy:
@@ -42,14 +42,15 @@ logs:
 validate:
 	@set -e; \
 	for f in docker-compose.yaml docker-compose-prod.yml; do \
+		echo "== $$f"; \
 		out=$$(docker compose -f $$f config -q 2>&1) || { echo "$$out"; exit 1; }; \
-	done; \
-	docker run --rm -v $(CURDIR)/alloy:/alloy $(call image,grafana/alloy) fmt /alloy/edge.alloy | diff -u alloy/edge.alloy -; \
+		docker run --rm -v $(CURDIR)/alloy:/alloy $(call image,grafana/alloy) fmt /alloy/edge.alloy | diff -u alloy/edge.alloy -; \
 	docker run --rm -e SERVER_NAME=x -e DEPLOY_ENV=x -e HOST_NAME=x -e LOKI_URL=http://x -e PROM_RW_URL=http://x -e OTLP_URL=x:4317 \
 		-v $(CURDIR)/alloy:/alloy $(call image,grafana/alloy) validate /alloy/edge.alloy; \
 	docker run --rm --entrypoint promtool -v $(CURDIR)/prometheus:/prometheus $(call image,prom/prometheus) check config /prometheus/prometheus.yml; \
 	docker run --rm -v $(CURDIR)/loki:/etc/loki $(call image,grafana/loki) -config.file=/etc/loki/loki.yml -verify-config; \
 	docker run --rm -v $(CURDIR)/tempo:/etc/tempo $(call image,grafana/tempo) -config.file=/etc/tempo/tempo.yml -config.verify=true; \
+	done; \
 	echo "validate: OK"
 
 .PHONY: smoke
