@@ -1,0 +1,272 @@
+// Edge agent: logs, metrics and traces of one server, tagged with the canonical labels.
+// Env: SERVER_NAME, DEPLOY_ENV, HOST_NAME, LOKI_URL, PROM_RW_URL, OTLP_URL
+
+// ---- Logs ----
+
+discovery.docker "containers" {
+	host = "tcp://dockerproxy:2375"
+}
+
+discovery.relabel "logs_canonical" {
+	targets = discovery.docker.containers.targets
+
+	rule {
+		replacement  = sys.env("SERVER_NAME")
+		target_label = "server"
+	}
+
+	rule {
+		replacement  = sys.env("DEPLOY_ENV")
+		target_label = "deployment_environment"
+	}
+
+	rule {
+		replacement  = sys.env("HOST_NAME")
+		target_label = "host_name"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
+
+	// Compose first, Swarm second: the Swarm label wins when both exist.
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		regex         = "(.+)"
+		target_label  = "service_namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_stack_namespace"]
+		regex         = "(.+)"
+		target_label  = "service_namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project", "__meta_docker_container_label_com_docker_compose_service"]
+		separator     = "_"
+		regex         = "(.+)_(.+)"
+		replacement   = "${1}_${2}"
+		target_label  = "service_name"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_swarm_service_name"]
+		regex         = "(.+)"
+		target_label  = "service_name"
+	}
+
+	// Legacy labels, kept until every dashboard and query uses the canonical ones.
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_swarm_service_name"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_stack_namespace"]
+		target_label  = "stack"
+	}
+}
+
+loki.source.docker "containers" {
+	host       = "tcp://dockerproxy:2375"
+	targets    = discovery.relabel.logs_canonical.output
+	forward_to = [loki.process.redact.receiver]
+}
+
+local.file_match "traefik_access" {
+	path_targets = [{
+		__path__               = "/var/log/traefik/access.log",
+		job                    = "traefik-access",
+		server                 = sys.env("SERVER_NAME"),
+		deployment_environment = sys.env("DEPLOY_ENV"),
+		host_name              = sys.env("HOST_NAME"),
+		service_namespace      = "traefik",
+		service_name           = "traefik_traefik",
+		stack                  = "traefik",
+		service                = "traefik",
+	}]
+}
+
+loki.source.file "traefik_access" {
+	targets    = local.file_match.traefik_access.targets
+	forward_to = [loki.process.redact.receiver]
+}
+
+// RE2 has no lookaround: each expression captures only the secret, which is replaced.
+loki.process "redact" {
+	forward_to = [loki.write.default.receiver]
+
+	// scheme://user:password@host
+	stage.replace {
+		expression = "://[^:/\\s@]*:([^@\\s/]+)@"
+		replace    = "***"
+	}
+
+	// Authorization: Bearer <token>
+	stage.replace {
+		expression = "(?i)bearer\\s+([A-Za-z0-9._~+/=-]{8,})"
+		replace    = "***"
+	}
+
+	// Authorization: Basic <base64>
+	stage.replace {
+		expression = "(?i)basic\\s+([A-Za-z0-9+/=]{8,})"
+		replace    = "***"
+	}
+
+	// password=..., password_confirmation: ..., "passwd": "...", escaped JSON, password%3D...
+	stage.replace {
+		expression = "(?i)(?:password\\w*|passwd|pwd)\\\\?[\"']?\\s*(?:[=:]|%3d)\\s*\\\\?[\"']?([^\\s\"'&,;\\\\]+)"
+		replace    = "***"
+	}
+
+	// JWT
+	stage.replace {
+		expression = "(eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]*)"
+		replace    = "***"
+	}
+}
+
+loki.write "default" {
+	endpoint {
+		url = sys.env("LOKI_URL")
+	}
+}
+
+// ---- Metrics ----
+
+prometheus.exporter.self "alloy" { }
+
+prometheus.scrape "alloy" {
+	targets         = prometheus.exporter.self.alloy.targets
+	scrape_interval = "15s"
+	forward_to      = [prometheus.relabel.metrics_canonical.receiver]
+}
+
+prometheus.scrape "node_exporter" {
+	targets         = [{"__address__" = "node-exporter:9100"}]
+	job_name        = "node-exporter"
+	scrape_interval = "15s"
+	forward_to      = [prometheus.relabel.metrics_canonical.receiver]
+}
+
+prometheus.scrape "cadvisor" {
+	targets         = [{"__address__" = "cadvisor:8080"}]
+	job_name        = "cadvisor"
+	scrape_interval = "15s"
+	forward_to      = [prometheus.relabel.metrics_canonical.receiver]
+}
+
+// Traefik metrics over the shared traefik_traefik_proxy overlay (entrypoint :8082)
+prometheus.scrape "traefik" {
+	targets         = [{"__address__" = "traefik_traefik:8082"}]
+	job_name        = "traefik"
+	scrape_interval = "15s"
+	forward_to      = [prometheus.relabel.metrics_canonical.receiver]
+}
+
+// Only cAdvisor series carry the whitelisted container_label_* labels, so the rules are no-ops elsewhere.
+prometheus.relabel "metrics_canonical" {
+	forward_to = [prometheus.remote_write.central.receiver]
+
+	rule {
+		replacement  = sys.env("HOST_NAME")
+		target_label = "host_name"
+	}
+
+	rule {
+		source_labels = ["job", "name"]
+		separator     = ";"
+		regex         = "cadvisor;(.+)"
+		target_label  = "container"
+	}
+
+	rule {
+		source_labels = ["container_label_com_docker_compose_project"]
+		regex         = "(.+)"
+		target_label  = "service_namespace"
+	}
+
+	rule {
+		source_labels = ["container_label_com_docker_stack_namespace"]
+		regex         = "(.+)"
+		target_label  = "service_namespace"
+	}
+
+	rule {
+		source_labels = ["container_label_com_docker_compose_project", "container_label_com_docker_compose_service"]
+		separator     = "_"
+		regex         = "(.+)_(.+)"
+		replacement   = "${1}_${2}"
+		target_label  = "service_name"
+	}
+
+	rule {
+		source_labels = ["container_label_com_docker_swarm_service_name"]
+		regex         = "(.+)"
+		target_label  = "service_name"
+	}
+}
+
+prometheus.remote_write "central" {
+	external_labels = {
+		server                 = sys.env("SERVER_NAME"),
+		deployment_environment = sys.env("DEPLOY_ENV"),
+	}
+
+	endpoint {
+		url = sys.env("PROM_RW_URL")
+	}
+}
+
+// ---- Traces ----
+
+otelcol.receiver.otlp "apps" {
+	grpc {
+		endpoint = "0.0.0.0:4317"
+	}
+
+	http {
+		endpoint = "0.0.0.0:4318"
+	}
+
+	output {
+		traces = [otelcol.processor.transform.traces_canonical.input]
+	}
+}
+
+otelcol.processor.transform "traces_canonical" {
+	error_mode = "ignore"
+
+	trace_statements {
+		context    = "resource"
+		statements = [
+			"set(attributes[\"server.name\"], \"" + sys.env("SERVER_NAME") + "\")",
+			"set(attributes[\"deployment.environment.name\"], \"" + sys.env("DEPLOY_ENV") + "\")",
+			"set(attributes[\"host.name\"], \"" + sys.env("HOST_NAME") + "\")",
+		]
+	}
+
+	output {
+		traces = [otelcol.processor.batch.traces.input]
+	}
+}
+
+otelcol.processor.batch "traces" {
+	output {
+		traces = [otelcol.exporter.otlp.tempo.input]
+	}
+}
+
+otelcol.exporter.otlp "tempo" {
+	client {
+		endpoint = sys.env("OTLP_URL")
+
+		tls {
+			insecure = true
+		}
+	}
+}

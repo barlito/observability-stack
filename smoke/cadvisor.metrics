@@ -1,0 +1,3 @@
+# TYPE container_memory_working_set_bytes gauge
+container_memory_working_set_bytes{container_label_com_docker_stack_namespace="carapp",container_label_com_docker_swarm_service_name="carapp_php",id="/docker/a",image="carapp:1",name="carapp_php.1.abc"} 1.048576e+06
+container_memory_working_set_bytes{container_label_com_docker_compose_project="proj",container_label_com_docker_compose_service="web",id="/docker/b",image="web:1",name="proj-web-1"} 2.097152e+06
