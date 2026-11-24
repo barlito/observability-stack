@@ -100,6 +100,7 @@ services:
             - alloy_data:/var/lib/alloy/data
         deploy:
             # One edge agent per node: logs, metrics and the OTLP entry point
+            # Single-node only: node-exporter/cadvisor are scraped through their VIPs
             mode: global
             labels:
                 - traefik.enable=true
@@ -173,7 +174,7 @@ services:
             - '--docker_only=true'
             - '--housekeeping_interval=30s'
             - '--store_container_labels=false'
-            - '--whitelisted_container_labels=com.docker.stack.namespace,com.docker.swarm.service.name,com.docker.compose.project,com.docker.compose.service'
+            - '--whitelisted_container_labels=com.docker.stack.namespace,com.docker.swarm.service.name,com.docker.compose.project,com.docker.compose.service,com.docker.compose.project.working_dir'
         volumes:
             - /:/rootfs:ro
             # DOCUMENTED EXCEPTION: cAdvisor keeps its direct read-only socket.

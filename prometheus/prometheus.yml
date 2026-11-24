@@ -3,6 +3,11 @@ global:
   evaluation_interval: 15s
 
 # Edge metrics (node-exporter, cAdvisor, Traefik, Alloy) arrive through remote write from Alloy.
+# Lets Alloy replay samples buffered in its WAL after an outage.
+storage:
+  tsdb:
+    out_of_order_time_window: 8h
+
 scrape_configs:
   - job_name: 'prometheus'
     static_configs:

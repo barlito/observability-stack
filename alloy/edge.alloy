@@ -101,7 +101,7 @@ loki.process "redact" {
 
 	// scheme://user:password@host
 	stage.replace {
-		expression = "://[^:/\\s@]+:([^@\\s/]+)@"
+		expression = "://[^:/\\s@]*:([^@\\s/]+)@"
 		replace    = "***"
 	}
 
@@ -111,9 +111,15 @@ loki.process "redact" {
 		replace    = "***"
 	}
 
-	// password=..., "passwd": "...", pwd: ...
+	// Authorization: Basic <base64>
 	stage.replace {
-		expression = "(?i)(?:password|passwd|pwd)[\"']?\\s*[=:]\\s*[\"']?([^\\s\"'&,;]+)"
+		expression = "(?i)basic\\s+([A-Za-z0-9+/=]{8,})"
+		replace    = "***"
+	}
+
+	// password=..., password_confirmation: ..., "passwd": "...", escaped JSON, password%3D...
+	stage.replace {
+		expression = "(?i)(?:password\\w*|passwd|pwd)\\\\?[\"']?\\s*(?:[=:]|%3d)\\s*\\\\?[\"']?([^\\s\"'&,;\\\\]+)"
 		replace    = "***"
 	}
 
@@ -172,8 +178,9 @@ prometheus.relabel "metrics_canonical" {
 	}
 
 	rule {
-		source_labels = ["name"]
-		regex         = "(.+)"
+		source_labels = ["job", "name"]
+		separator     = ";"
+		regex         = "cadvisor;(.+)"
 		target_label  = "container"
 	}
 
@@ -212,11 +219,6 @@ prometheus.remote_write "central" {
 
 	endpoint {
 		url = sys.env("PROM_RW_URL")
-	}
-
-	// Samples are buffered on disk for up to 8h if the central Prometheus is unreachable.
-	wal {
-		max_keepalive_time = "8h"
 	}
 }
 

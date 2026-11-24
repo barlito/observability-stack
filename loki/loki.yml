@@ -38,7 +38,7 @@ schema_config:
 limits_config:
   retention_period: 30d
   discover_log_levels: true
-  max_query_length: 7d
+  max_query_length: 721h
   query_timeout: 30s
   max_entries_limit_per_query: 1000
   ingestion_rate_mb: 16

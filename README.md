@@ -99,11 +99,11 @@ Any change to a config file produces new config objects (`obs_prometheus_cfg_<ha
 | Network | Scope | Members |
 |---------|-------|---------|
 | `obs_internal` | **Private** to the stack | Prometheus, Grafana, Loki, Tempo, Alloy, exporters. Not reachable from app stacks. |
-| `obs_ingest` | **Shared** with app stacks | **Alloy only**, aliased `otlp`. Apps join it to push traces and reach nothing else. Real name: `obs_obs_ingest` (stack `obs` prefix). |
+| `obs_ingest` | **Shared** with app stacks | **Alloy only**, aliased `otlp`. Apps join it to push traces; Alloy also exposes its debug UI (`:12345`) there. Real name: `obs_obs_ingest` (stack `obs` prefix). |
 | `obs_query` | **Shared** with ops-mcp | **Loki, Prometheus, Tempo only.** Fixed name `obs_query`; ops-mcp joins it as an external network to query them. |
 | `traefik_traefik_proxy` | External (traefik-base) | Services exposed through Traefik. |
 
-An application stack that emits traces reaches Alloy **and nothing else**. Tempo is no longer on `obs_ingest`: Alloy is the only entry point.
+An application stack that joins `obs_ingest` reaches Alloy only (OTLP `4317`/`4318` and the debug UI `12345`). Tempo is no longer on `obs_ingest`: Alloy is the only entry point.
 
 ### Auth
 
@@ -154,7 +154,9 @@ Access-log lines carry `job="traefik-access"`, `service_namespace="traefik"`, `s
 
 ## Metrics from your apps
 
-Prometheus scrapes only itself. Alloy scrapes node-exporter, cAdvisor, Traefik and itself, then pushes to Prometheus by remote write (`PROM_RW_URL`) with the canonical labels, `server` and `deployment_environment` as `external_labels`, and a disk WAL that buffers 8h if Prometheus is down. cAdvisor only exports the four whitelisted Docker labels. To scrape one of your applications, add a `prometheus.scrape` block in `alloy/edge.alloy` pointing at its service DNS name (the app must share a network with Alloy).
+Alloy reaches node-exporter and cAdvisor through their Swarm VIPs, which is only correct on a single node. A multi-node setup needs `discovery.dns` on `tasks.<service>` filtered by node (phase 7).
+
+Prometheus scrapes only itself. Alloy scrapes node-exporter, cAdvisor, Traefik and itself, then pushes to Prometheus by remote write (`PROM_RW_URL`) with the canonical labels, `server` and `deployment_environment` as `external_labels`, and a WAL that buffers samples if Prometheus is down (Prometheus accepts up to 8h of out-of-order samples to take the replay). cAdvisor only exports the four whitelisted Docker labels. To scrape one of your applications, add a `prometheus.scrape` block in `alloy/edge.alloy` pointing at its service DNS name (the app must share a network with Alloy).
 
 ## Sending traces
 
@@ -163,7 +165,7 @@ Applications push traces via OpenTelemetry (OTLP) to Alloy, which adds `server.n
 - **HTTP**: `http://otlp:4318` (recommended — no gRPC dependency)
 - **gRPC**: `http://otlp:4317`
 
-The application stack must join the shared `obs_ingest` network (it exposes Alloy as `otlp` and nothing else). In each app's compose:
+The application stack must join the shared `obs_ingest` network (it exposes Alloy as `otlp`). In each app's compose:
 
 ```yaml
 services:
@@ -220,7 +222,8 @@ Then in Grafana → Explore → Tempo → Search, filter by service name `test-t
 ## Security notes
 
 - Alloy and Dozzle reach the Docker API through the read-only `docker-socket-proxy` (containers, networks, events, info; no writes). cAdvisor keeps a direct read-only socket mount, the one documented exception.
-- Loki, Prometheus and Tempo are only reachable from `obs_internal` and `obs_query`; apps only see the OTLP entry point.
+- Loki, Prometheus and Tempo are reachable from `obs_internal` and `obs_query`. Residual risk: `obs_query` is attachable, so any stack declaring it can reach Loki push, Prometheus remote write and Tempo; Prometheus also stays on `traefik_traefik_proxy` (UI), so any container on that network can POST `/api/v1/write`. Topology unchanged for now.
+- Alloy's debug UI (`:12345`) is reachable from `obs_ingest`.
 - Secrets in logs are masked at ingestion (see Redaction).
 
 ## Commands
@@ -247,3 +250,5 @@ Image tags are pinned on the minor and patches float, except where upstream publ
 ## Rollback
 
 Redeploy the previous master sha: `git checkout <sha> && make deploy.prod`, or run the deploy workflow on that ref. Volumes are untouched. After a rollback Prometheus scrapes again and series lose the remote-write labels (`server`, `service_name`, ...); the legacy `stack`/`service` log labels are kept in both directions. Detect a failure fast with `up` in Grafana, the provisioned dashboards, and Loki ingestion (`sum(rate({server="ovh-prod-1"}[1m]))`).
+
+`obs_query` stays after a rollback (`docker stack deploy` does not prune networks; harmless). During a deploy Alloy may get 404s from Prometheus until the receiver flag is live, so a few samples can be lost. The Loki `service_name` of the Traefik access log changes from `traefik` to `traefik_traefik`, which matters for the Loki dashboard variable.

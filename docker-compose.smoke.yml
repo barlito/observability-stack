@@ -82,6 +82,11 @@ services:
             echo "request Authorization: Bearer abcdef0123456789token";
             echo "config password=hunter2hunter2 loaded";
             echo "session eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.c2lnbmF0dXJl";
+            echo "cache redis://:RedisPw99@redis:6379/0";
+            echo "{\\\"password\\\":\\\"EscJsonPw1\\\"}";
+            echo "form password_confirmation=ConfirmPw77 submitted";
+            echo "GET /login?password%3DEncPw55&x=1";
+            echo "request Authorization: Basic dXNlcjpCYXNpY1B3";
             echo "plain line without secrets";
             sleep 2; done'
 

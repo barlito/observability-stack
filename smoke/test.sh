@@ -45,12 +45,12 @@ logs_ok() {
 retry "Loki has logs with server/service_namespace/service_name" logs_ok
 
 lines=$(loki '{service_name="obs-smoke_log-emitter"}' | jq -r '.data.result[].values[][1]')
-for secret in S3cretPw abcdef0123456789token hunter2hunter2 c2lnbmF0dXJl; do
+for secret in S3cretPw abcdef0123456789token hunter2hunter2 c2lnbmF0dXJl RedisPw99 EscJsonPw1 ConfirmPw77 EncPw55 dXNlcjpCYXNpY1B3; do
 	echo "$lines" | grep -q "$secret" && fail "secret $secret not redacted"
 done
 echo "$lines" | grep -q 'postgres://app:\*\*\*@db' || fail "DSN redaction keeps scheme and user"
 echo "$lines" | grep -q 'plain line without secrets' || fail "plain line untouched"
-echo "PASS: secrets redacted (DSN, bearer, password=, JWT)"
+echo "PASS: secrets redacted (DSN with and without user, bearer, basic, password variants, JWT)"
 
 # prom_has <query>: the instant query returns at least one series
 prom_has() { prom "$1" | jq -e '.data.result | length > 0'; }
