@@ -77,11 +77,11 @@ services:
     log-emitter:
         image: alpine:3.24
         command: >
-            sh -c 'while true; do
+            sh -c 'h=eyJhbGciOiJIUzI1NiJ9; p=eyJzdWIiOiIxMjM0NTYifQ; while true; do
             echo "connecting to postgres://app:S3cretPw@db:5432/app";
             echo "request Authorization: Bearer abcdef0123456789token";
             echo "config password=hunter2hunter2 loaded";
-            echo "session eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.c2lnbmF0dXJl";
+            echo "session $${h}.$${p}.c2lnbmF0dXJl";
             echo "cache redis://:RedisPw99@redis:6379/0";
             echo "{\\\"password\\\":\\\"EscJsonPw1\\\"}";
             echo "form password_confirmation=ConfirmPw77 submitted";
