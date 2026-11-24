@@ -130,6 +130,14 @@ Available Loki labels:
 | `service` | `obs_grafana` |
 | `stack` | `obs` |
 
+### Traefik access logs (file source)
+
+Traefik writes its **access log** to a file (`/var/log/traefik/access.log`, JSON, one object per request) instead of stdout, so the Docker source above no longer sees it. Alloy tails that file via a `loki.source.file` and ships it to the same Loki endpoint. Traefik's *application* log stays on stdout and is still collected through the Docker source.
+
+This requires the host path `/var/log/traefik` to be bind-mounted read-only into the Alloy container (`/var/log/traefik:/var/log/traefik:ro`, already wired in both compose files). Since Alloy is a **global** service, every node that runs Traefik must expose that directory.
+
+Access-log lines carry the label `job="traefik-access"` (plus `service="traefik"`, `stack="traefik"`). The payload is JSON, so parse fields at query time in Grafana, e.g. `{job="traefik-access"} | json | DownstreamStatus >= 500`.
+
 ## Metrics from your apps
 
 Prometheus already scrapes itself, node-exporter, cAdvisor and Traefik (see `prometheus/prometheus.yml`). To scrape one of your applications, expose a `/metrics` endpoint and add a scrape job pointing at its service DNS name (the app must share a network Prometheus can reach).

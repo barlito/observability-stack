@@ -91,6 +91,9 @@ services:
         volumes:
             - ./alloy:/etc/alloy
             - alloy_data:/var/lib/alloy/data
+            # Traefik writes its access log to a file here; tailing it lets Alloy
+            # ship those access logs to Loki (they no longer go to stdout).
+            - /var/log/traefik:/var/log/traefik:ro
         deploy:
             # One agent per node: collects logs of all local containers via the
             # Docker API and pushes them to Loki over the overlay network

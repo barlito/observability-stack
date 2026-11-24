@@ -33,6 +33,25 @@ loki.source.docker "containers" {
 	forward_to = [loki.write.default.receiver]
 }
 
+// Traefik's access log is written to a file (JSON, one object per request)
+// instead of stdout, so the Docker source above never sees it. Tail it from the
+// host bind mount (/var/log/traefik:ro on the alloy service) and ship it to the
+// same Loki endpoint. Traefik's *application* log stays on stdout and is still
+// captured by loki.source.docker.
+local.file_match "traefik_access" {
+	path_targets = [{
+		__path__ = "/var/log/traefik/access.log",
+		job      = "traefik-access",
+		service  = "traefik",
+		stack    = "traefik",
+	}]
+}
+
+loki.source.file "traefik_access" {
+	targets    = local.file_match.traefik_access.targets
+	forward_to = [loki.write.default.receiver]
+}
+
 // Push to Loki over the obs_internal overlay network
 loki.write "default" {
 	endpoint {
