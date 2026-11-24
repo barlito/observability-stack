@@ -48,7 +48,7 @@ discovery.relabel "logs_canonical" {
 		source_labels = ["__meta_docker_container_label_com_docker_compose_project", "__meta_docker_container_label_com_docker_compose_service"]
 		separator     = "_"
 		regex         = "(.+)_(.+)"
-		replacement   = "$1_$2"
+		replacement   = "${1}_${2}"
 		target_label  = "service_name"
 	}
 
@@ -136,7 +136,6 @@ prometheus.exporter.self "alloy" { }
 
 prometheus.scrape "alloy" {
 	targets         = prometheus.exporter.self.alloy.targets
-	job_name        = "alloy"
 	scrape_interval = "15s"
 	forward_to      = [prometheus.relabel.metrics_canonical.receiver]
 }
@@ -194,7 +193,7 @@ prometheus.relabel "metrics_canonical" {
 		source_labels = ["container_label_com_docker_compose_project", "container_label_com_docker_compose_service"]
 		separator     = "_"
 		regex         = "(.+)_(.+)"
-		replacement   = "$1_$2"
+		replacement   = "${1}_${2}"
 		target_label  = "service_name"
 	}
 

@@ -56,7 +56,7 @@ echo "PASS: secrets redacted (DSN, bearer, password=, JWT)"
 prom_has() { prom "$1" | jq -e '.data.result | length > 0'; }
 
 retry "Prometheus up{server=local,job=node-exporter} = 1" prom_has 'up{server="local",deployment_environment="development",host_name="smoke-host",job="node-exporter"} == 1'
-retry "Prometheus up{server=local,job=alloy} = 1" prom_has 'up{server="local",job="alloy"} == 1'
+retry "Prometheus up{server=local,job=integrations/self} = 1" prom_has 'up{server="local",job="integrations/self"} == 1'
 retry "cAdvisor swarm labels mapped to canonical labels" \
 	prom_has 'container_memory_working_set_bytes{server="local",service_namespace="carapp",service_name="carapp_php",container="carapp_php.1.abc"}'
 retry "cAdvisor compose labels mapped to canonical labels" \
